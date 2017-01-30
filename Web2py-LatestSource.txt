@@ -1,0 +1,92 @@
+= Install script for web2py (latest stable source) =
+
+{{{
+-----BEGIN WEBFACTION INSTALL SCRIPT-----
+#!/bin/env python2.6
+
+"""
+Web2py install/uninstall script for WebFaction using the latest stable source
+code from http://www.web2py.com/examples/static/web2py_src.zip. This installs
+web2py for Python 2.7 along with Apache + mod_wsgi v4.4.13. The web2py files
+are found in ~/webapps/<app_name>/web2py. 
+
+IMPORTANT: Remember to set the Admin password in the extra_info field.
+
+Caveats
+-------
+
+* Web2py won't work properly if it is mounted to a sub-URL like
+http://domain.com/web2py/. Instead, it must be mounted to the website root,
+e.g. http://domain.com/
+
+* For the administrative interface to work, the web2py app must be mounted to and
+accessed through an HTTPS-enabled site. You would usually mount the app to two
+websites - HTTPS-disabled one for normal access, and HTTPS-enabled one for admin
+logins.
+
+"autostart": not applicable
+"extra info": Password for administrative interface
+"""
+
+import sys
+import xmlrpclib
+
+def hash_password(plaintext):
+    """Standardized method for hashing password"""
+    from hashlib import md5
+    return md5(plaintext).hexdigest()
+
+def create(server, session_id, account, username, app_name, autostart, extra_info, password):
+    # Create application.
+    app = server.create_app(session_id, app_name, 'mod_wsgi4413-python27')
+
+    # Get the latest web2py source
+    server.system(session_id, 'wget -q http://www.web2py.com/examples/static/web2py_src.zip')
+    server.system(session_id, 'unzip -q web2py_src.zip')
+
+    # create paramaters_80.py
+    assert extra_info
+    server.system(session_id, "echo 'password=\"%s\"' > web2py/parameters_80.py" % hash_password(extra_info))
+
+    # remove the unnecessary lines from the default mod_wsgi httpd.conf
+    conf = 'apache2/conf/httpd.conf'
+    home_dir = account['home']
+    wsgi_path = '~%s/webapps/%s/web2py/wsgihandler.py' % (username, app_name)
+    replace_cmds = ("sed -i 's/^<Directory.*//g' %s" % conf,
+                    "sed -i 's/^<\/Directory.*//g' %s" % conf,
+                    "sed -i 's/^\s*AddHandler wsgi-script.*//g' %s" % conf)
+    for cmd in replace_cmds:
+        server.system(session_id, cmd)
+
+    cmd = 'cp %s/%s/webapps/%s/web2py/handlers/wsgihandler.py %s/%s/webapps/%s/web2py/wsgihandler.py' % (
+            home_dir, username, app_name, home_dir, username, app_name)
+    server.system(session_id, cmd)
+
+    # add the proper WSGI line
+    line = 'WSGIScriptAlias / %s/%s/webapps/%s/web2py/wsgihandler.py' %(home_dir, username, app_name)
+    server.write_file(session_id, conf,line,'a')
+
+    # restart Apache
+    server.system(session_id, "apache2/bin/restart 2>&1 >/dev/null")
+
+    print app['id']
+
+
+def delete(server, session_id, account, username, app_name, autostart, extra_info, password):
+    # Delete the application
+    server.delete_app(session_id, app_name)
+
+
+if __name__ == '__main__':
+    command, username, password, machine, app_name, autostart, extra_info = sys.argv[1:]
+
+    # Connect to API server and login
+    url = 'https://api.webfaction.com/'
+    server = xmlrpclib.ServerProxy(url)
+    session_id, account = server.login(username, password, machine)
+
+    # Call create or delete method
+    method = locals()[command] # create or delete
+    method(server, session_id, account, username, app_name, autostart, extra_info, password)
+-----END WEBFACTION INSTALL SCRIPT-----
+}}}
